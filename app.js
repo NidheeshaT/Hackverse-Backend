@@ -1,57 +1,65 @@
-import * as dotenv from "dotenv";
-dotenv.config();
-import express from "express";
-import sessionMidware from "./controllers/session.js";
-import session from "express-session";
-import cors from "cors";
-import authRouter from "./routes/auth.js";
-import passport from "passport";
-import mongoose from "mongoose";
-import User from "./models/UserModel.js";
-const url=process.env.CONNECT_DB_URL
+import express from 'express';
+const app = express();
+import http from 'http';
+const server = http.createServer(app);
+import { Server } from 'socket.io';
+import sessionMidware from './controllers/session.js';
 
-const isLoggedin=(req,res,next)=>{
-    if(req.user){
-    req.session.user=req.user
-    }
-    if(req.session.user){
-        next()
-    }else{
-        res.status(403).send("not logged in")
-    }
+const io = new Server(server,{cors:{
+    origin: (origin,callback)=>{return callback(null,true)},
+    credentials:true
+}});
+const socketModel={
+    email:{
+        email:String,
+        socketID:String,
+        team:String
+    },
+    
 }
+io.use((socket, next) => sessionMidware(socket.request, socket.request.res, next));
 
-const app=express()
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }));
-app.use(cors(
-    {
-        origin: 'http://localhost',
-    }
-))
+io.on('connection', async(socket) => {
+    // console.log('a user connected');
+    let user;
+    console.log(socket.request.session);
+    // if(socket.request.session.email)
+    //     user=socketModel['email']
+    // if(user)
+    // {
+    //     socketModel[socket.request.session.email]['socketID']=socket.id
+    // }
+    // else{
+    //     if(socket.request.session.email)
+    //         socketModel[socket.request.session.email]['email']=socket.request.session.email
+    //         socketModel[socket.request.session.email]['socketID']=socket.id
+    //         user=socketModel[socket.request.session.email]
+    // }
 
-app.use(sessionMidware);
-app.use(passport.initialize())
-app.use(passport.session())
-app.use(function(err, req, res, next) {
-    console.error(err.stack);
-    res.status(500).send('Internal Server Error');
-  });
-app.use('/',authRouter)
-app.get('/',passport.authenticate('google',{successRedirect: '/success',failureRedirect: '/failure'}))
+    
+    socket.on('joinTeam',async({team,email})=>{
+        console.log(team,email)
+        socketModel[email]={}
+        socketModel[email].email=email
+        socketModel[email].team=team
+        socketModel[email].socketID=socket.id
+        user=socketModel[email]
+        socket.join(team)
+        socket.to(team).emit('newUser',user)
+    })
+    socket.on('onType',async({type,data,event})=>{
+        console.log(data,event)
+        socket.to(user.team).except(user.socketID).emit('onType',{type,data,event,user})
+    })
+    
+    socket.on('disconnect', () => {
+        console.log('user disconnected');
+        socketModel[socket.request.session.email]=undefined
+    });
+});
 
-app.get('/success',isLoggedin,async(req,res)=>{
-    res.send("success")
-})
-app.get('/failure',(req,res)=>{
-    res.send("failure")
-})
-mongoose.connect(url,{useNewUrlParser: true, useUnifiedTopology: true}).then(()=>{
-    console.log("connected to database")
-    app.listen(80,()=>{
-        console.log("listening at port 80")
-    })    
-}).catch((err)=>{
-    console.log(err)
-})
 
+
+server.listen(80, () => {
+  console.log('listening on 80');
+});
